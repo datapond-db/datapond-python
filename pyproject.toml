@@ -1,0 +1,44 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "datapond"
+version = "0.1.0"
+description = "Instantly connect to curated DuckDB databases built from public data"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.9"
+authors = [
+    { name = "Ian Nason" },
+]
+keywords = ["duckdb", "data", "public-data", "government-data", "database"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Database",
+    "Topic :: Scientific/Engineering",
+]
+dependencies = [
+    "duckdb>=0.9.0",
+    "requests",
+]
+
+[project.optional-dependencies]
+download = ["huggingface_hub"]
+
+[project.urls]
+Homepage = "https://datapond-db.github.io/website"
+Repository = "https://github.com/datapond-db/datapond-python"
+Registry = "https://github.com/datapond-db/registry"
+
+[project.scripts]
+datapond = "datapond.cli:main"
