@@ -27,6 +27,14 @@ def main():
     dl_parser.add_argument("db_id", help="Database ID")
     dl_parser.add_argument("--path", default=None, help="Destination path")
 
+    # datapond describe <db_id> [--table TABLE] [--search PATTERN]
+    desc_parser = subparsers.add_parser(
+        "describe", help="Describe tables, columns, and join keys"
+    )
+    desc_parser.add_argument("db_id", help="Database ID")
+    desc_parser.add_argument("--table", default=None, help="Show columns for a specific table")
+    desc_parser.add_argument("--search", default=None, help="Search column names")
+
     # datapond connect <db_id>
     connect_parser = subparsers.add_parser(
         "connect", help="Open an interactive session with a database"
@@ -45,6 +53,8 @@ def main():
         _cmd_info(args.db_id)
     elif args.command == "download":
         _cmd_download(args.db_id, args.path)
+    elif args.command == "describe":
+        _cmd_describe(args.db_id, args.table, args.search)
     elif args.command == "connect":
         _cmd_connect(args.db_id)
 
@@ -71,6 +81,16 @@ def _cmd_download(db_id, path):
 
     try:
         download(db_id, path=path)
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
+def _cmd_describe(db_id, table, search):
+    from datapond.describe import describe
+
+    try:
+        describe(db_id, table=table, search=search)
     except Exception as e:
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)

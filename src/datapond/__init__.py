@@ -9,6 +9,7 @@ __version__ = "0.1.0"
 from datapond.registry import list_databases, get_database, get_registry
 from datapond.connection import connect
 from datapond.download import download, update
+from datapond.describe import describe
 
 
 def list():
