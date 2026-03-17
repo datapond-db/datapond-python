@@ -13,7 +13,7 @@ def describe(db_id: str, table: str = None, search: str = None):
         table: If provided, show columns for this specific table.
         search: If provided, search column names across all tables.
     """
-    con = connect(db_id)
+    con = connect(db_id, quiet=True)
 
     if search:
         _search_columns(con, search)

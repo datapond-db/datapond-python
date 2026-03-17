@@ -16,13 +16,14 @@ from datapond.registry import get_database
 DATAPOND_DIR = Path.home() / ".datapond"
 
 
-def download(db_id: str, path: str = None) -> Path:
+def download(db_id: str, path: str = None, quiet: bool = False) -> Path:
     """Download a database file.
 
     Args:
         db_id: The database ID to download.
         path: Destination path. Defaults to ~/.datapond/{db_id}.duckdb.
               If path is a directory, saves as {path}/{db_id}.duckdb.
+        quiet: If True, suppress progress messages.
 
     Returns:
         The path to the downloaded file.
@@ -39,11 +40,17 @@ def download(db_id: str, path: str = None) -> Path:
 
     dest.parent.mkdir(parents=True, exist_ok=True)
 
+    name = db.get("name", db_id)
+    size = db.get("size_gb", "?")
+    if not quiet:
+        print(f"Downloading {name} ({size} GB)...")
+
     hf_url = db.get("huggingface")
     if hf_url:
         repo_id = _extract_hf_repo_id(hf_url)
         if _try_hf_download(repo_id, filename, dest):
-            print(f"Downloaded {db_id} to {dest}")
+            if not quiet:
+                print(f"Saved to {dest}")
             return dest
 
     # Fallback: download via requests from the attach_url or a direct link
@@ -52,7 +59,8 @@ def download(db_id: str, path: str = None) -> Path:
         raise ValueError(f"No download URL available for '{db_id}'")
 
     _download_with_requests(download_url, dest, db_id)
-    print(f"Downloaded {db_id} to {dest}")
+    if not quiet:
+        print(f"Saved to {dest}")
     return dest
 
 

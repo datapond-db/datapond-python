@@ -4,7 +4,7 @@ datapond - Public data, instantly queryable.
 Instantly connect to curated DuckDB databases built from public data.
 """
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 
 from datapond.registry import list_databases, get_database, get_registry
 from datapond.connection import connect
