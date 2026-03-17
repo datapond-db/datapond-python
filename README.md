@@ -47,6 +47,20 @@ df = con.sql("SELECT * FROM cases LIMIT 1000").df()  # pandas
 pl = con.sql("SELECT * FROM cases LIMIT 1000").pl()   # polars
 ```
 
+### Remote vs local
+
+Every database can be queried remotely in seconds with no download required, or downloaded locally for full speed.
+
+```python
+# Remote -- streams over HTTP, no download needed
+con = datapond.connect("eoir")
+con.sql("SELECT * FROM proceedings LIMIT 5").show()
+
+# Local -- download once, query at full disk speed
+datapond.download("eoir")
+con = datapond.connect("eoir", local=True)
+```
+
 ### Download for offline use
 
 ```python
