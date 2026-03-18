@@ -66,12 +66,15 @@ class LazyConnection:
         for db_id, db in self._entries:
             name = db.get("name", db_id)
             size = db.get("size_gb", "?")
+            # Quote the alias so IDs with hyphens (e.g. ipeds-db) are valid
+            alias = db_id.replace('"', '""')
+            quoted = f'"{alias}"'
 
             if self._local:
                 if not self._quiet:
                     print(f"Connecting to {name} (local)...")
                 path = _local_path(db_id)
-                con.execute(f"ATTACH '{path}' AS {db_id} (READ_ONLY)")
+                con.execute(f"ATTACH '{path}' AS {quoted} (READ_ONLY)")
             else:
                 if not self._quiet:
                     print(f"Connecting to {name} ({size} GB remote)...")
@@ -80,10 +83,11 @@ class LazyConnection:
                     con.install_extension("httpfs")
                     con.load_extension("httpfs")
                     installed_httpfs = True
-                con.execute(f"ATTACH '{attach_url}' AS {db_id} (READ_ONLY)")
+                con.execute(f"ATTACH '{attach_url}' AS {quoted} (READ_ONLY)")
 
         if self._single:
-            con.execute(f"USE {self._entries[0][0]}")
+            first_alias = self._entries[0][0].replace('"', '""')
+            con.execute(f'USE "{first_alias}"')
 
         # Count tables
         if not self._quiet:
