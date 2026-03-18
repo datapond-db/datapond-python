@@ -7,13 +7,15 @@ datapond gives you instant SQL access to curated DuckDB databases built from pub
 ## Install
 
 ```bash
-pip install datapond
+uv pip install datapond
 ```
+
+Or with pip: `pip install datapond`
 
 For faster downloads from Hugging Face:
 
 ```bash
-pip install datapond[download]
+uv pip install "datapond[download]"
 ```
 
 ## Quick start
