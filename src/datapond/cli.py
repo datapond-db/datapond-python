@@ -105,10 +105,12 @@ def _cmd_connect(db_id):
     # Try the duckdb CLI first
     duckdb_bin = shutil.which("duckdb")
     if duckdb_bin:
+        # Quote the alias so IDs with hyphens (e.g. ipeds-db) are valid
+        alias = '"' + db_id.replace('"', '""') + '"'
         init_sql = (
             f"INSTALL httpfs; LOAD httpfs; "
-            f"ATTACH '{attach_url}' AS {db_id} (READ_ONLY); "
-            f"USE {db_id};"
+            f"ATTACH '{attach_url}' AS {alias} (READ_ONLY); "
+            f"USE {alias};"
         )
         try:
             subprocess.run([duckdb_bin, "-cmd", init_sql], check=True)
