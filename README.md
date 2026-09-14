@@ -12,6 +12,8 @@ uv pip install datapond
 
 Or with pip: `pip install datapond`
 
+Using R? See [datapond-r](https://github.com/datapond-db/datapond-r) (`pak::pak("datapond-db/datapond-r")`).
+
 For faster downloads from Hugging Face:
 
 ```bash
@@ -152,6 +154,7 @@ file once so that every later query runs at disk speed.
 - [Website](https://datapond-db.github.io/website)
 - [Registry](https://github.com/datapond-db/registry) -- catalog of available databases
 - [Source](https://github.com/datapond-db/datapond-python)
+- [R package](https://github.com/datapond-db/datapond-r)
 
 ## Contributing
 
