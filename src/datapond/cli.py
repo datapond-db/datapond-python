@@ -27,6 +27,12 @@ def main():
     dl_parser.add_argument("db_id", help="Database ID")
     dl_parser.add_argument("--path", default=None, help="Destination path")
 
+    # datapond update <db_id>
+    up_parser = subparsers.add_parser(
+        "update", help="Re-download a local database if the registry has a newer version"
+    )
+    up_parser.add_argument("db_id", help="Database ID")
+
     # datapond describe <db_id> [--table TABLE] [--search PATTERN]
     desc_parser = subparsers.add_parser(
         "describe", help="Describe tables, columns, and join keys"
@@ -53,6 +59,8 @@ def main():
         _cmd_info(args.db_id)
     elif args.command == "download":
         _cmd_download(args.db_id, args.path)
+    elif args.command == "update":
+        _cmd_update(args.db_id)
     elif args.command == "describe":
         _cmd_describe(args.db_id, args.table, args.search)
     elif args.command == "connect":
@@ -81,6 +89,16 @@ def _cmd_download(db_id, path):
 
     try:
         download(db_id, path=path)
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
+def _cmd_update(db_id):
+    from datapond.download import update
+
+    try:
+        update(db_id)
     except Exception as e:
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)

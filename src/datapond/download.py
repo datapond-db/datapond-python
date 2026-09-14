@@ -4,7 +4,6 @@ Download management for datapond databases.
 Supports downloading via huggingface_hub (preferred) or requests (fallback).
 """
 
-import os
 import shutil
 from datetime import datetime, timezone
 from pathlib import Path
@@ -29,6 +28,7 @@ def download(db_id: str, path: str = None, quiet: bool = False) -> Path:
         The path to the downloaded file.
     """
     db = get_database(db_id)
+    # Local files are always named {db_id}.duckdb so connect(local=True) can find them.
     filename = f"{db_id}.duckdb"
 
     if path is None:
@@ -48,7 +48,10 @@ def download(db_id: str, path: str = None, quiet: bool = False) -> Path:
     hf_url = db.get("huggingface")
     if hf_url:
         repo_id = _extract_hf_repo_id(hf_url)
-        if _try_hf_download(repo_id, filename, dest):
+        # The file on Hugging Face is not always named {db_id}.duckdb
+        # (e.g. cms-medicare -> cms_medicare.duckdb), so take the name from attach_url.
+        hf_filename = _hf_filename(db, filename)
+        if _try_hf_download(repo_id, hf_filename, dest):
             if not quiet:
                 print(f"Saved to {dest}")
             return dest
@@ -94,6 +97,13 @@ def update(db_id: str) -> Path:
 
     print(f"Updating {db_id}...")
     return download(db_id)
+
+
+def _hf_filename(db: dict, default: str) -> str:
+    """Return the filename of the .duckdb inside the HF repo (last segment of attach_url)."""
+    attach_url = db.get("attach_url") or ""
+    name = attach_url.rstrip("/").rsplit("/", 1)[-1]
+    return name if name.endswith(".duckdb") else default
 
 
 def _extract_hf_repo_id(hf_url: str) -> str:

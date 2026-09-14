@@ -93,7 +93,8 @@ class LazyConnection:
         if not self._quiet:
             tables = con.sql(
                 "SELECT COUNT(*) FROM information_schema.tables "
-                "WHERE table_schema != 'information_schema'"
+                "WHERE table_schema != 'information_schema' "
+                "AND table_name NOT IN ('_metadata', '_columns')"
             ).fetchone()[0]
             if len(self._entries) == 1:
                 print(f"Connected. {tables} tables available.")

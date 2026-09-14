@@ -2,7 +2,7 @@
 
 **Public data, instantly queryable.**
 
-datapond gives you instant SQL access to curated DuckDB databases built from public data sources -- no downloads, no API keys, no setup.
+datapond gives you instant SQL access to curated DuckDB databases built from public data sources -- no full download, no API keys, no setup. DuckDB attaches the remote file over HTTP and fetches only the byte ranges your query touches.
 
 ## Install
 
@@ -39,14 +39,24 @@ import datapond
 
 con = datapond.connect("eoir")
 con.sql("SHOW TABLES").show()
-con.sql("SELECT * FROM cases LIMIT 10").show()
+con.sql("SELECT * FROM proceedings LIMIT 10").show()
 ```
 
 The connection is a standard [duckdb.Connection](https://duckdb.org/docs/api/python/overview) -- use it however you normally use DuckDB, including with pandas and Polars.
 
 ```python
-df = con.sql("SELECT * FROM cases LIMIT 1000").df()  # pandas
-pl = con.sql("SELECT * FROM cases LIMIT 1000").pl()   # polars
+df = con.sql("SELECT * FROM proceedings LIMIT 1000").df()  # pandas
+pl = con.sql("SELECT * FROM proceedings LIMIT 1000").pl()   # polars
+```
+
+### Explore the schema
+
+Every database ships with a data dictionary (`_metadata` and `_columns` tables). `describe()` reads it:
+
+```python
+datapond.describe("eoir")                        # tables with row counts and descriptions
+datapond.describe("eoir", table="proceedings")   # columns, types, null %, examples, join hints
+datapond.describe("eoir", search="judge")        # find columns by name across all tables
 ```
 
 ### Remote vs local
@@ -54,7 +64,7 @@ pl = con.sql("SELECT * FROM cases LIMIT 1000").pl()   # polars
 Every database can be queried remotely in seconds with no download required, or downloaded locally for full speed.
 
 ```python
-# Remote -- streams over HTTP, no download needed
+# Remote -- attaches over HTTP; only the bytes your query needs are transferred
 con = datapond.connect("eoir")
 con.sql("SELECT * FROM proceedings LIMIT 5").show()
 
@@ -80,15 +90,21 @@ datapond.update("eoir")
 
 ## Multi-database queries
 
-Attach multiple databases at once and query across them:
+Attach multiple databases at once and query across them. Tables are namespaced by
+database ID; IDs that contain a hyphen must be double-quoted in SQL:
 
 ```python
-con = datapond.connect(["eoir", "foia"])
+con = datapond.connect(["cms-medicare", "openpayments"])
 
-# Tables are namespaced by database ID
-con.sql("SELECT * FROM eoir.cases LIMIT 5").show()
-con.sql("SELECT * FROM foia.requests LIMIT 5").show()
+con.sql('SELECT * FROM "cms-medicare".physician_summary LIMIT 5').show()
+con.sql("SELECT * FROM openpayments.general_payments LIMIT 5").show()
 ```
+
+Both of those databases key providers by NPI (`"cms-medicare".physician_summary.Rndrng_NPI`
+and `openpayments.general_payments.covered_recipient_npi`), so they can be joined
+directly. Remote joins across large tables transfer a lot of data -- download both
+first (`datapond.download(...)`, then `connect([...], local=True)`) for anything heavier
+than a quick look.
 
 ## CLI
 
@@ -104,6 +120,14 @@ datapond info eoir
 # Download a database
 datapond download eoir --path ./data/
 
+# Re-download if the registry has a newer version
+datapond update eoir
+
+# Describe tables and columns
+datapond describe eoir
+datapond describe eoir --table proceedings
+datapond describe eoir --search judge
+
 # Open an interactive SQL session
 datapond connect eoir
 ```
@@ -118,7 +142,10 @@ When you call `datapond.connect()`, it:
 3. Attaches the remote DuckDB file as read-only
 4. Returns a connection ready for queries
 
-No data is downloaded unless you explicitly call `datapond.download()`.
+Remote mode does transfer data: DuckDB issues HTTP range requests for the metadata and
+row groups a query touches, so `SELECT COUNT(*)` on a 37 GB table is cheap but `SELECT *`
+is not. What it avoids is the *full* download. `datapond.download()` fetches the whole
+file once so that every later query runs at disk speed.
 
 ## Links
 
@@ -129,6 +156,10 @@ No data is downloaded unless you explicitly call `datapond.download()`.
 ## Contributing
 
 Contributions are welcome. To add a new database to datapond, submit a pull request to the [registry](https://github.com/datapond-db/registry) repository.
+
+## Credits
+
+datapond is built and maintained by [Ian Nason](https://github.com/ian-nason): the registry, this client, the website, and seven of the databases. The IPEDS database is built and maintained by [Paul Goldsmith-Pinkham](https://github.com/paulgp). See the registry's [contributors section](https://github.com/datapond-db/registry#contributors) for the per-database breakdown.
 
 ## License
 
