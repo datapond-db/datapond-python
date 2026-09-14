@@ -5,6 +5,24 @@ Describe databases, tables, and columns using the _columns data dictionary.
 from datapond.connection import connect
 
 
+def _dict_columns(con, table):
+    """Column names of a dictionary table (_metadata/_columns), or None if absent.
+
+    Databases contributed by different people carry slightly different
+    dictionary schemas (e.g. no `description` in _metadata, no `join_hint` in
+    _columns), so queries are built from the columns that actually exist.
+    """
+    try:
+        return [r[0] for r in con.execute(f"DESCRIBE {table}").fetchall()]
+    except Exception:
+        return None
+
+
+def _select(have, wanted):
+    """SELECT list that substitutes NULL for wanted columns that are missing."""
+    return ", ".join(c if c in have else f"NULL AS {c}" for c in wanted)
+
+
 def describe(db_id: str, table: str = None, search: str = None):
     """Describe a database's tables and columns.
 
@@ -25,14 +43,15 @@ def describe(db_id: str, table: str = None, search: str = None):
 
 def _describe_database(con):
     """Print all tables with row counts."""
-    try:
+    have = _dict_columns(con, "_metadata")
+    if have and "table_name" in have:
         rows = con.execute(
-            "SELECT table_name, row_count, description "
+            f"SELECT {_select(have, ['table_name', 'row_count', 'description'])} "
             "FROM _metadata "
             "WHERE table_name NOT IN ('_metadata', '_columns') "
             "ORDER BY table_name"
         ).fetchall()
-    except Exception:
+    else:
         # Fall back to information_schema if _metadata is missing
         rows = con.execute(
             "SELECT table_name, NULL, NULL "
@@ -110,15 +129,17 @@ def _search_columns(con, pattern):
     """Search column names across all tables."""
     pattern_upper = pattern.upper()
 
-    try:
+    have = _dict_columns(con, "_columns")
+    cols = []
+    if have and "table_name" in have and "column_name" in have:
         cols = con.execute(
-            "SELECT table_name, column_name, data_type, join_hint "
+            f"SELECT {_select(have, ['table_name', 'column_name', 'data_type', 'join_hint'])} "
             "FROM _columns "
             "WHERE UPPER(column_name) LIKE '%' || ? || '%' "
             "ORDER BY table_name, column_name",
             [pattern_upper],
         ).fetchall()
-    except Exception:
+    if not cols:
         cols = con.execute(
             "SELECT table_name, column_name, data_type, NULL "
             "FROM information_schema.columns "
