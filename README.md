@@ -44,7 +44,7 @@ con.sql("SHOW TABLES").show()
 con.sql("SELECT * FROM proceedings LIMIT 10").show()
 ```
 
-The connection is a standard [duckdb.Connection](https://duckdb.org/docs/api/python/overview) -- use it however you normally use DuckDB, including with pandas and Polars.
+`connect()` returns a plain [`duckdb.DuckDBPyConnection`](https://duckdb.org/docs/api/python/overview) with the database attached read-only (it takes a second or two to attach). Use it exactly as you use DuckDB: pandas and Polars conversions, `con.register()`, and referencing a DataFrame by name in SQL all work.
 
 ```python
 df = con.sql("SELECT * FROM proceedings LIMIT 1000").df()  # pandas
@@ -90,6 +90,8 @@ con = datapond.connect("eoir", local=True)
 datapond.update("eoir")
 ```
 
+`download()` streams to a temporary file and replaces the destination only after the transfer is complete and the file opens as a DuckDB database, so a failed download never damages an existing copy. It records the remote file's identity (Hugging Face ETag and size) in `<file>.datapond.json`; `update()` re-fetches the registry, compares that identity with the remote file, and re-downloads only when it differs. A `--path` that ends in a separator or has no `.duckdb` suffix is treated as a directory and created.
+
 ## Multi-database queries
 
 Attach multiple databases at once and query across them. Tables are namespaced by
@@ -122,7 +124,7 @@ datapond info eoir
 # Download a database
 datapond download eoir --path ./data/
 
-# Re-download if the registry has a newer version
+# Re-download if the file on Hugging Face has changed
 datapond update eoir
 
 # Describe tables and columns

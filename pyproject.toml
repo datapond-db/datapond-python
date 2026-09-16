@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "datapond"
-version = "0.1.3"
+version = "0.1.4"
 description = "Instantly connect to curated DuckDB databases built from public data"
 readme = "README.md"
 license = "MIT"
@@ -28,7 +28,7 @@ classifiers = [
     "Topic :: Scientific/Engineering",
 ]
 dependencies = [
-    "duckdb>=0.9.0",
+    "duckdb>=1.0.0",
     "requests",
 ]
 

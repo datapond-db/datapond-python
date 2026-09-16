@@ -49,20 +49,20 @@ def _fetch_registry() -> dict:
     return data
 
 
-def get_registry() -> dict:
-    """Return the parsed registry dict, using cache if fresh."""
-    if _cache_is_fresh():
+def get_registry(refresh: bool = False) -> dict:
+    """Return the parsed registry dict, using the cache if fresh (or always fetching with ``refresh``)."""
+    if not refresh and _cache_is_fresh():
         with open(CACHE_FILE, "r") as f:
             return json.load(f)
     return _fetch_registry()
 
 
-def get_database(db_id: str) -> dict:
+def get_database(db_id: str, refresh: bool = False) -> dict:
     """Return a single database entry from the registry.
 
     Raises ValueError if the database ID is not found.
     """
-    registry = get_registry()
+    registry = get_registry(refresh=refresh)
     databases = registry.get("databases", [])
     for db in databases:
         if db.get("id") == db_id:
