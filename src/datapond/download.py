@@ -64,7 +64,18 @@ def download(db_id: str, path: str = None, quiet: bool = False) -> Path:
     if not download_url:
         raise ValueError(f"No download URL available for '{db_id}'")
 
-    _download_with_requests(download_url, dest, db_id)
+    # The GET response carries the file's own validator; if it differs from what HEAD
+    # reported, the remote file changed in between and the transfer is redone once
+    # against the new identity, so the sidecar always describes the bytes on disk.
+    for _attempt in range(2):
+        got = _download_with_requests(download_url, dest, db_id)
+        if identity.get("etag") and got.get("etag") and identity["etag"] != got["etag"]:
+            identity = got
+            continue
+        identity = {**identity, **got}
+        break
+    else:
+        raise IOError("the remote file kept changing during the download; try again later")
     _write_sidecar(dest, db_id, download_url, identity)
     if not quiet:
         print(f"Saved to {dest}")
@@ -174,10 +185,14 @@ def _needs_update(db: dict, local_path: Path):
     if local.get("local_size") not in (None, local_path.stat().st_size):
         return "local file changed since it was downloaded"
     remote = remote_identity(url) if url else {}
+    # Only a strong validator (ETag, else Last-Modified) can declare the copy current;
+    # equal sizes are not evidence of the same revision.
     if local.get("etag") and remote.get("etag"):
         return None if local["etag"] == remote["etag"] else "remote file changed"
-    if local.get("size") and remote.get("size"):
-        return None if local["size"] == remote["size"] else "remote size changed"
+    if local.get("last_modified") and remote.get("last_modified"):
+        return None if local["last_modified"] == remote["last_modified"] else "remote file changed"
+    if local and remote:
+        return "remote revision cannot be verified (no ETag or Last-Modified)"
     # No identity to compare: fall back to the registry date, and only trust a
     # local copy that is strictly newer than the registry's release date.
     remote_updated = db.get("updated")
@@ -269,12 +284,24 @@ def _unlink_quietly(path: Path) -> None:
         pass
 
 
-def _download_with_requests(url: str, dest: Path, db_id: str):
-    """Stream ``url`` into a temporary file next to ``dest`` and install it on success."""
+def _identity_from_headers(headers) -> dict:
+    ident = {}
+    etag = headers.get("x-linked-etag") or headers.get("etag")
+    if etag:
+        ident["etag"] = etag.strip('"').replace("W/", "")
+    if headers.get("last-modified"):
+        ident["last_modified"] = headers["last-modified"]
+    return ident
+
+
+def _download_with_requests(url: str, dest: Path, db_id: str) -> dict:
+    """Stream ``url`` into a temporary file next to ``dest`` and install it on success.
+    Returns the identity (ETag / Last-Modified) the response reported."""
     tmp = _temp_path(dest)
     try:
         with requests.get(url, stream=True, timeout=30) as resp:
             resp.raise_for_status()
+            got = _identity_from_headers(resp.headers)
             total = int(resp.headers.get("content-length", 0))
             try:
                 from tqdm import tqdm  # noqa: F401
@@ -284,6 +311,8 @@ def _download_with_requests(url: str, dest: Path, db_id: str):
         if total and received != total:
             raise IOError(f"incomplete download: {received} of {total} bytes")
         _install(tmp, dest)
+        got["size"] = received
+        return got
     finally:
         _unlink_quietly(tmp)
 

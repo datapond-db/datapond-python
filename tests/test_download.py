@@ -26,9 +26,11 @@ def make_db(path: Path, value: int) -> bytes:
 class Response:
     """A fake streaming response; ``chunks`` may end with an exception to raise."""
 
-    def __init__(self, chunks, size=None):
+    def __init__(self, chunks, size=None, etag=None):
         self.chunks = chunks
         self.headers = {"content-length": str(size)} if size is not None else {}
+        if etag:
+            self.headers["etag"] = '"' + etag + '"'
 
     def __enter__(self):
         return self
@@ -137,3 +139,34 @@ def test_local_connection_quotes_paths_and_supports_replacement_scans(tmp_path):
     frame = pd.DataFrame({"x": [1, 2]})  # noqa: F841 - referenced by name in SQL
     assert con.sql("SELECT SUM(x) FROM frame").fetchone()[0] == 3
     con.close()
+
+
+def test_update_never_trusts_size_alone(tmp_path, monkeypatch):
+    monkeypatch.setattr(dl, "DATAPOND_DIR", tmp_path)
+    dest = tmp_path / "x.duckdb"
+    make_db(dest, 1)
+    entry = {"attach_url": "https://example.test/x.duckdb", "updated": "2026-09-15"}
+    dl._write_sidecar(dest, "x", entry["attach_url"], {"size": dest.stat().st_size})
+    with patch.object(dl, "get_database", return_value=entry), patch.object(dl, "download") as d:
+        with patch.object(dl, "remote_identity", return_value={"size": dest.stat().st_size}):
+            dl.update("x")
+            assert d.called, "same size but no validator: re-download"
+        d.reset_mock()
+        dl._write_sidecar(dest, "x", entry["attach_url"], {"last_modified": "Tue, 15 Sep 2026 00:00:00 GMT", "size": 1})
+        with patch.object(dl, "remote_identity", return_value={"last_modified": "Tue, 15 Sep 2026 00:00:00 GMT", "size": 1}):
+            dl.update("x")
+            assert not d.called, "same Last-Modified is a validator"
+
+
+def test_download_redoes_transfer_when_file_changed_between_head_and_get(tmp_path, monkeypatch):
+    monkeypatch.setattr(dl, "_try_hf_download", lambda *a, **k: False)
+    monkeypatch.setattr(dl, "remote_identity", lambda url, timeout=30: {"etag": "old"})
+    dest = tmp_path / "x.duckdb"
+    v1 = make_db(tmp_path / "v1.duckdb", 1)
+    v2 = make_db(tmp_path / "v2.duckdb", 2)
+    entry = {"attach_url": "https://example.test/x.duckdb"}
+    responses = [Response([v1], size=len(v1), etag="new"), Response([v2], size=len(v2), etag="new")]
+    with patch.object(dl, "get_database", return_value=entry), patch.object(dl.requests, "get", side_effect=responses) as get:
+        dl.download("x", path=str(dest), quiet=True)
+    assert get.call_count == 2 and dest.read_bytes() == v2
+    assert json.loads((tmp_path / "x.duckdb.datapond.json").read_text())["etag"] == "new"
