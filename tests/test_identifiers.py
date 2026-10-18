@@ -11,7 +11,7 @@ from datapond import cli, connection, registry
 def databases(tmp_path, monkeypatch):
     original_connect = duckdb.connect
     paths = []
-    for index in (1, 2):
+    for index in (1, 2, 3):
         path = tmp_path / ("fixture%d.duckdb" % index)
         con = original_connect(str(path), config={"threads": "1", "memory_limit": "128MiB"})
         con.execute("CREATE TABLE records (value INTEGER)")
@@ -42,10 +42,10 @@ def databases(tmp_path, monkeypatch):
 
     monkeypatch.setattr(duckdb, "connect", OfflineConnection)
     monkeypatch.setattr(connection, "get_database", lambda identifier: {
-        "id": identifier, "attach_url": paths[identifier == "cms-medicare"]})
+        "id": identifier, "attach_url": paths[{"cms-medicare": 1, 'id"quoted': 2}.get(identifier, 0)]})
     monkeypatch.setattr(connection, "_local_path",
-                        lambda identifier: paths[identifier == "cms-medicare"])
-    yield SimpleNamespace(paths=paths, extensions=extensions, original_connect=original_connect)
+                        lambda identifier: paths[{"cms-medicare": 1, 'id"quoted': 2}.get(identifier, 0)])
+    yield SimpleNamespace(paths=paths, extensions=extensions, opened=opened, original_connect=original_connect)
     for con in opened:
         con.close()
 
@@ -55,7 +55,7 @@ def databases(tmp_path, monkeypatch):
 def test_single_database_identifier_selects_default_and_stays_read_only(databases, identifier, local):
     con = connection.connect(identifier, local=local, quiet=True)
     try:
-        expected = 2 if identifier == "cms-medicare" else 1
+        expected = {"cms-medicare": 2, 'id"quoted': 3}.get(identifier, 1)
         assert con.execute("SELECT value FROM records").fetchall() == [(expected,)]
         assert con.execute("SELECT current_database()").fetchone() == (identifier,)
         with pytest.raises(duckdb.Error, match="(?i)read.only"):
@@ -67,10 +67,11 @@ def test_single_database_identifier_selects_default_and_stays_read_only(database
 
 @pytest.mark.parametrize("local", [True, False])
 def test_multiple_hyphenated_catalogs_can_be_queried_together(databases, local):
-    con = connection.connect(["fjc-judges", "cms-medicare"], local=local, quiet=True)
+    con = connection.connect(["fjc-judges", "cms-medicare", 'id"quoted'], local=local, quiet=True)
     try:
-        assert con.execute('SELECT f.value, c.value FROM "fjc-judges".records f '
-                           'CROSS JOIN "cms-medicare".records c').fetchall() == [(1, 2)]
+        assert con.execute('SELECT f.value, c.value, q.value FROM "fjc-judges".records f '
+                           'CROSS JOIN "cms-medicare".records c '
+                           'CROSS JOIN "id""quoted".records q').fetchall() == [(1, 2, 3)]
         assert databases.extensions == ([] if local else [("install", "httpfs"), ("load", "httpfs")])
     finally:
         con.close()
@@ -98,3 +99,13 @@ def test_cli_initialization_sql_handles_the_same_identifiers(databases, monkeypa
     monkeypatch.setattr(cli.subprocess, "run", run)
     cli._cmd_connect(identifier)
     assert executed == [True]
+
+
+def test_connection_attachment_timing_is_preserved(databases):
+    con = connection.connect("fjc-judges", local=True, quiet=True)
+    try:
+        assert len(databases.opened) == 1
+        assert con.execute("SELECT value FROM records").fetchall() == [(1,)]
+        assert len(databases.opened) == 1
+    finally:
+        con.close()
