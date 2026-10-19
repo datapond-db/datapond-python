@@ -2,7 +2,7 @@
 
 **Public data, instantly queryable.**
 
-datapond gives you instant SQL access to curated DuckDB databases built from public data sources -- no full download, no API keys, no setup. DuckDB attaches the remote file over HTTP and fetches only the byte ranges your query touches.
+datapond gives you SQL access to curated DuckDB databases built from public data sources. After installing the package, you can query a remote file without first downloading it in full or obtaining an API key. DuckDB fetches byte ranges over HTTP and runs the query on your machine.
 
 ## Install
 
@@ -19,13 +19,15 @@ the interpreter that runs your queries. Version 0.1.1 cannot attach IDs such as
 Current source already includes that fix; changing SQL quoting in your query
 alone does not repair the older client's internally generated ATTACH statement.
 
-Using R? See [datapond-r](https://github.com/datapond-db/datapond-r) (`pak::pak("datapond-db/datapond-r")`).
+Using R? Install the released [CRAN package](https://cran.r-project.org/package=datapond) with `install.packages("datapond")`. The [R source documentation](https://github.com/datapond-db/datapond-r) distinguishes CRAN 0.1.0 from development 0.1.1.
 
-For faster downloads from Hugging Face:
+An optional Hugging Face download backend is available:
 
 ```bash
 uv pip install "datapond[download]"
 ```
+
+In version 0.1.5, this optional backend follows the Hugging Face repository's default branch even when the registry URL names an immutable revision. For a reproducible local copy, use the immutable URL and SHA-256 on the dataset page. Installing the extra is not required for remote queries.
 
 ## Quick start
 
@@ -51,7 +53,7 @@ con.sql("SHOW TABLES").show()
 con.sql("SELECT * FROM proceedings LIMIT 10").show()
 ```
 
-`connect()` returns a plain [`duckdb.DuckDBPyConnection`](https://duckdb.org/docs/api/python/overview) with the database attached read-only (it takes a second or two to attach). Use it exactly as you use DuckDB: pandas and Polars conversions, `con.register()`, and referencing a DataFrame by name in SQL all work.
+`connect()` returns a plain [`duckdb.DuckDBPyConnection`](https://duckdb.org/docs/api/python/overview) with the database attached read-only. Attachment time depends on the network and file. Use it exactly as you use DuckDB: pandas and Polars conversions, `con.register()`, and referencing a DataFrame by name in SQL all work.
 
 ```python
 df = con.sql("SELECT * FROM proceedings LIMIT 1000").df()  # pandas
@@ -70,17 +72,31 @@ datapond.describe("eoir", search="judge")        # find columns by name across a
 
 ### Remote vs local
 
-Every database can be queried remotely in seconds with no download required, or downloaded locally for full speed.
+Remote mode transfers the metadata and data ranges needed by each query. Local mode downloads the whole file first, then reads it from disk. Neither mode guarantees an execution time; joins, aggregations and result size also matter.
 
 ```python
-# Remote -- attaches over HTTP; only the bytes your query needs are transferred
+# Remote -- attaches over HTTP; query shape determines the transferred ranges
 con = datapond.connect("eoir")
 con.sql("SELECT * FROM proceedings LIMIT 5").show()
 
-# Local -- download once, query at full disk speed
+# Local -- download once, then read from disk
 datapond.download("eoir")
 con = datapond.connect("eoir", local=True)
 ```
+
+### Bound memory before a query
+
+The Python client returns a DuckDB connection. Set limits after connecting and before running a query:
+
+```python
+import datapond
+con = datapond.connect("onet")
+con.execute("SET memory_limit='128MiB'; SET threads=1; SET max_temp_directory_size='0B'")
+con.sql("SELECT onet_soc_code, title FROM occupation_data ORDER BY onet_soc_code LIMIT 5").show()
+con.close()
+```
+
+These settings take effect after attachment. To configure DuckDB before attachment, create a `duckdb.connect(config=...)` connection and use a dataset page's direct-URL example. The buffer-pool limit is not a cap on the entire Python process or a collected DataFrame. With spill disabled, larger queries can fail at the limit. Filter and select needed columns; `LIMIT` after a join or aggregate does not guarantee a small scan.
 
 ### Download for offline use
 
@@ -97,7 +113,7 @@ con = datapond.connect("eoir", local=True)
 datapond.update("eoir")
 ```
 
-`download()` streams to a temporary file and replaces the destination only after the transfer is complete and the file opens as a DuckDB database, so a failed download never damages an existing copy. It records the remote file's identity (Hugging Face ETag and size) in `<file>.datapond.json`; `update()` re-fetches the registry, compares that identity with the remote file, and re-downloads only when it differs. A `--path` that ends in a separator or has no `.duckdb` suffix is treated as a directory and created.
+`download()` streams to a temporary file and replaces the destination only after the transfer is complete and the file opens as a DuckDB database, so a failed download never damages an existing copy. It records the remote file's identity (Hugging Face ETag and size) in `<file>.datapond.json`; `update()` re-fetches the registry, compares that identity with the remote file, and re-downloads only when it differs. A `path=` argument (CLI `--path`) that ends in a separator or has no `.duckdb` suffix is treated as a directory and created.
 
 ## Multi-database queries
 
@@ -112,8 +128,7 @@ con.sql("SELECT * FROM openpayments.general_payments LIMIT 5").show()
 ```
 
 Both of those databases key providers by NPI (`"cms-medicare".physician_summary.Rndrng_NPI`
-and `openpayments.general_payments.covered_recipient_npi`), so they can be joined
-directly. Remote joins across large tables transfer a lot of data -- download both
+and `openpayments.general_payments.covered_recipient_npi`). Before joining, choose the time period and unit of analysis and aggregate each side to the intended unique provider key. Joining multiple rows per NPI on both sides multiplies records. Remote joins across large tables transfer a lot of data -- download both
 first (`datapond.download(...)`, then `connect([...], local=True)`) for anything heavier
 than a quick look.
 
@@ -153,10 +168,7 @@ When you call `datapond.connect()`, it:
 3. Attaches the remote DuckDB file as read-only
 4. Returns a connection ready for queries
 
-Remote mode does transfer data: DuckDB issues HTTP range requests for the metadata and
-row groups a query touches, so `SELECT COUNT(*)` on a 37 GB table is cheap but `SELECT *`
-is not. What it avoids is the *full* download. `datapond.download()` fetches the whole
-file once so that every later query runs at disk speed.
+Remote mode does transfer data: DuckDB issues HTTP range requests for metadata and row groups. A simple base-table count may use metadata, while filtered counts, views and joins can scan substantial data. Even a small result can require a large transfer. `datapond.download()` fetches the whole file for later disk reads; allow space for the new file, temporary download bytes and any existing copy. File size is not a RAM estimate.
 
 ## Links
 
@@ -171,7 +183,7 @@ Contributions are welcome. To add a new database to datapond, submit a pull requ
 
 ## Credits
 
-datapond is built and maintained by [Ian Nason](https://github.com/ian-nason): the registry, this client, the website, and seven of the databases. The IPEDS database is built and maintained by [Paul Goldsmith-Pinkham](https://github.com/paulgp). See the registry's [contributors section](https://github.com/datapond-db/registry#contributors) for the per-database breakdown.
+datapond is built and maintained by [Ian Nason](https://github.com/ian-nason): the registry, this client, the website, and the databases attributed to him in the registry. The IPEDS database is built and maintained by [Paul Goldsmith-Pinkham](https://github.com/paulgp). See the registry's [contributors section](https://github.com/datapond-db/registry#contributors) for the per-database breakdown.
 
 ## License
 
