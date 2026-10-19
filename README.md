@@ -12,6 +12,13 @@ uv pip install datapond
 
 Or with pip: `pip install datapond`
 
+For an existing environment, use `python -m pip install --upgrade datapond` with
+the interpreter that runs your queries. Version 0.1.1 cannot attach IDs such as
+`fjc-judges`; identifier quoting was fixed in 0.1.2. Check the actual import with
+`python -c "import datapond; print(datapond.__version__, datapond.__file__)"`.
+Current source already includes that fix; changing SQL quoting in your query
+alone does not repair the older client's internally generated ATTACH statement.
+
 Using R? See [datapond-r](https://github.com/datapond-db/datapond-r) (`pak::pak("datapond-db/datapond-r")`).
 
 For faster downloads from Hugging Face:
