@@ -13,6 +13,7 @@ import os
 import shutil
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import unquote, urlsplit
 
 import requests
 
@@ -51,10 +52,10 @@ def download(db_id: str, path: str = None, quiet: bool = False) -> Path:
     hf_url = db.get("huggingface")
     if hf_url:
         repo_id = _extract_hf_repo_id(hf_url)
-        # The file on Hugging Face is not always named {db_id}.duckdb
-        # (e.g. cms-medicare -> cms_medicare.duckdb), so take the name from attach_url.
-        hf_filename = _hf_filename(db, dest.name)
-        if _try_hf_download(repo_id, hf_filename, dest):
+        # Preserve the actual download URL's revision and complete repository path.
+        # A different host/repository must use that URL, not the HF default branch.
+        target = _hf_download_target(download_url, repo_id) if download_url else (dest.name, "main")
+        if target and _try_hf_download(repo_id, target[0], dest, revision=target[1]):
             _write_sidecar(dest, db_id, download_url, identity)
             if not quiet:
                 print(f"Saved to {dest}")
@@ -209,11 +210,16 @@ def _needs_update(db: dict, local_path: Path):
     return "no version information for the local copy"
 
 
-def _hf_filename(db: dict, default: str) -> str:
-    """Return the filename of the .duckdb inside the HF repo (last segment of attach_url)."""
-    attach_url = db.get("attach_url") or ""
-    name = attach_url.rstrip("/").rsplit("/", 1)[-1]
-    return name if name.endswith(".duckdb") else default
+def _hf_download_target(url: str, repo_id: str):
+    """Return (repository path, revision) only for a matching HF resolve URL."""
+    parsed = urlsplit(url)
+    prefix = f"/datasets/{repo_id}/resolve/"
+    if parsed.scheme != "https" or parsed.netloc != "huggingface.co" or not parsed.path.startswith(prefix):
+        return None
+    revision, separator, filename = parsed.path[len(prefix):].partition("/")
+    if not separator or not revision or not filename:
+        return None
+    return unquote(filename), unquote(revision)
 
 
 def _extract_hf_repo_id(hf_url: str) -> str:
@@ -228,7 +234,7 @@ def _extract_hf_repo_id(hf_url: str) -> str:
     return "/".join(parts[-2:])
 
 
-def _try_hf_download(repo_id: str, filename: str, dest: Path) -> bool:
+def _try_hf_download(repo_id: str, filename: str, dest: Path, revision: str = "main") -> bool:
     """Try downloading via huggingface_hub. Returns True on success."""
     try:
         from huggingface_hub import hf_hub_download
@@ -240,6 +246,7 @@ def _try_hf_download(repo_id: str, filename: str, dest: Path) -> bool:
             repo_id=repo_id,
             filename=filename,
             repo_type="dataset",
+            revision=revision,
         )
         dest.parent.mkdir(parents=True, exist_ok=True)
         tmp = _temp_path(dest)

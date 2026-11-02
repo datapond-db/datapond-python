@@ -29,6 +29,11 @@ uv pip install "datapond[download]"
 
 In version 0.1.5, this optional backend follows the Hugging Face repository's default branch even when the registry URL names an immutable revision. For a reproducible local copy, use the immutable URL and SHA-256 on the dataset page. Installing the extra is not required for remote queries.
 
+The unreleased development code preserves the revision and nested filename from
+the registry's download URL (or attach URL when no download URL is provided).
+Explicit URLs for another host or repository use the HTTP fallback unchanged.
+This correction is not yet included in the PyPI 0.1.5 release.
+
 ## Quick start
 
 ### Browse available databases
