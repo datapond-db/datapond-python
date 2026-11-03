@@ -8,9 +8,10 @@ good copy is never damaged by a failed or interrupted download. A small sidecar
 size) so ``update()`` compares versions instead of modification times.
 """
 
+import hashlib
 import json
 import os
-import shutil
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
@@ -47,15 +48,14 @@ def download(db_id: str, path: str = None, quiet: bool = False) -> Path:
         print(f"Downloading {name} ({size} GB)...")
 
     download_url = db.get("download_url") or db.get("attach_url")
-    identity = remote_identity(download_url) if download_url else {}
-
     hf_url = db.get("huggingface")
     if hf_url:
         repo_id = _extract_hf_repo_id(hf_url)
         # Preserve the actual download URL's revision and complete repository path.
         # A different host/repository must use that URL, not the HF default branch.
         target = _hf_download_target(download_url, repo_id) if download_url else (dest.name, "main")
-        if target and _try_hf_download(repo_id, target[0], dest, revision=target[1]):
+        identity = _try_hf_download(repo_id, target[0], dest, revision=target[1]) if target else None
+        if identity:
             _write_sidecar(dest, db_id, download_url, identity)
             if not quiet:
                 print(f"Saved to {dest}")
@@ -65,18 +65,9 @@ def download(db_id: str, path: str = None, quiet: bool = False) -> Path:
     if not download_url:
         raise ValueError(f"No download URL available for '{db_id}'")
 
-    # The GET response carries the file's own validator; if it differs from what HEAD
-    # reported, the remote file changed in between and the transfer is redone once
-    # against the new identity, so the sidecar always describes the bytes on disk.
-    for _attempt in range(2):
-        got = _download_with_requests(download_url, dest, db_id)
-        if identity.get("etag") and got.get("etag") and identity["etag"] != got["etag"]:
-            identity = got
-            continue
-        identity = {**identity, **got}
-        break
-    else:
-        raise IOError("the remote file kept changing during the download; try again later")
+    # Only the GET response identifies the bytes actually transferred. A separate
+    # HEAD can describe another revision, especially when a mutable branch moves.
+    identity = _download_with_requests(download_url, dest, db_id)
     _write_sidecar(dest, db_id, download_url, identity)
     if not quiet:
         print(f"Saved to {dest}")
@@ -135,19 +126,19 @@ def remote_identity(url: str, timeout: int = 30) -> dict:
         r.raise_for_status()
     except requests.RequestException:
         return {}
+    # The final Xet/CDN ETag can identify transport storage rather than the Hub
+    # file. Prefer the content identity supplied by HF's own resolve response.
+    linked = _hf_response_identity(r)
+    if linked:
+        return linked
     h = r.headers
-    etag = h.get("x-linked-etag") or h.get("etag")
     size = h.get("x-linked-size") or h.get("content-length")
-    ident = {}
-    if etag:
-        ident["etag"] = etag.strip('"').replace("W/", "")
+    ident = _identity_from_headers(h)
     if size:
         try:
             ident["size"] = int(size)
         except ValueError:
             pass
-    if h.get("last-modified"):
-        ident["last_modified"] = h["last-modified"]
     return ident
 
 
@@ -234,31 +225,85 @@ def _extract_hf_repo_id(hf_url: str) -> str:
     return "/".join(parts[-2:])
 
 
-def _try_hf_download(repo_id: str, filename: str, dest: Path, revision: str = "main") -> bool:
-    """Try downloading via huggingface_hub. Returns True on success."""
+def _try_hf_download(repo_id: str, filename: str, dest: Path, revision: str = "main"):
+    """Return the verified Hub identity on success, or None for HTTP fallback."""
     try:
-        from huggingface_hub import hf_hub_download
+        from huggingface_hub import get_hf_file_metadata, hf_hub_download, hf_hub_url
     except ImportError:
-        return False
+        return None
 
     try:
+        metadata = get_hf_file_metadata(hf_hub_url(
+            repo_id=repo_id, filename=filename, repo_type="dataset", revision=revision,
+        ))
+        commit = metadata.commit_hash
+        etag = metadata.etag
+        size = metadata.size
+        if not isinstance(commit, str) or not re.fullmatch(r"[0-9a-fA-F]{40}", commit):
+            raise IOError("Hub did not resolve an immutable commit")
+        if re.fullmatch(r"[0-9a-fA-F]{40}", revision) and revision.lower() != commit.lower():
+            raise IOError("Hub metadata does not match the requested commit")
+        if not isinstance(etag, str) or not re.fullmatch(r"[0-9a-fA-F]{40}|[0-9a-fA-F]{64}", etag):
+            raise IOError("Hub did not provide a supported content hash")
+        if not isinstance(size, int) or isinstance(size, bool) or size < 0:
+            raise IOError("Hub did not provide a valid file size")
         cached_path = hf_hub_download(
             repo_id=repo_id,
             filename=filename,
             repo_type="dataset",
-            revision=revision,
+            revision=commit,
         )
         dest.parent.mkdir(parents=True, exist_ok=True)
         tmp = _temp_path(dest)
         try:
-            shutil.copy2(cached_path, tmp)
+            _copy_verified_hf_file(cached_path, tmp, etag, size)
             _install(tmp, dest)
         finally:
             _unlink_quietly(tmp)
-        return True
+        return {"etag": etag.lower(), "size": size, "resolved_revision": commit}
     except Exception as e:
         print(f"huggingface_hub download failed ({e}), falling back to requests...")
-        return False
+        return None
+
+
+def _copy_verified_hf_file(source, dest: Path, etag: str, size: int) -> None:
+    """Copy once while verifying HF's SHA-256 (LFS) or Git blob SHA-1 identity."""
+    digest = _hf_hasher(etag, size)
+    received = 0
+    with open(source, "rb") as src, open(dest, "wb") as dst:
+        while True:
+            chunk = src.read(1 << 20)
+            if not chunk:
+                break
+            if received + len(chunk) > size:
+                raise IOError("Hub cached file exceeds its resolved size")
+            dst.write(chunk)
+            digest.update(chunk)
+            received += len(chunk)
+    if received != size or digest.hexdigest() != etag.lower():
+        raise IOError("Hub cached file does not match its resolved content identity")
+
+
+def _hf_hasher(etag: str, size: int):
+    digest = hashlib.sha256() if len(etag) == 64 else hashlib.sha1()
+    if len(etag) == 40:
+        digest.update(b"blob " + str(size).encode("ascii") + b"\0")
+    return digest
+
+
+def _verify_hf_file(path: Path, identity: dict) -> None:
+    """Verify a completed HTTP transfer against its own HF response identity."""
+    if path.stat().st_size != identity["size"]:
+        raise IOError("HF response size does not match the transferred file")
+    digest = _hf_hasher(identity["etag"], identity["size"])
+    with open(path, "rb") as src:
+        while True:
+            chunk = src.read(1 << 20)
+            if not chunk:
+                break
+            digest.update(chunk)
+    if digest.hexdigest() != identity["etag"]:
+        raise IOError("HF response content hash does not match the transferred file")
 
 
 def _temp_path(dest: Path) -> Path:
@@ -295,10 +340,41 @@ def _identity_from_headers(headers) -> dict:
     ident = {}
     etag = headers.get("x-linked-etag") or headers.get("etag")
     if etag:
-        ident["etag"] = etag.strip('"').replace("W/", "")
+        ident["etag"] = etag.strip().removeprefix("W/").strip('"')
     if headers.get("last-modified"):
         ident["last_modified"] = headers["last-modified"]
     return ident
+
+
+def _hf_response_identity(response):
+    """Canonical identity from this request's HF resolve response, if present."""
+    for part in [*getattr(response, "history", []), response]:
+        url = urlsplit(getattr(part, "url", ""))
+        if (url.scheme != "https" or url.netloc != "huggingface.co"
+                or not re.fullmatch(r"/datasets/[^/]+/[^/]+/resolve/[^/]+/.+", url.path)):
+            continue
+        headers = part.headers
+        if headers.get("x-linked-etag"):
+            size = headers.get("x-linked-size")
+        elif part is response and headers.get("x-repo-commit"):
+            size = headers.get("content-length")
+        else:
+            continue
+        etag = _identity_from_headers(headers).get("etag", "")
+        if not re.fullmatch(r"[0-9a-fA-F]{40}|[0-9a-fA-F]{64}", etag):
+            continue
+        try:
+            size = int(size)
+        except (TypeError, ValueError):
+            continue
+        if size < 0:
+            continue
+        identity = {"etag": etag.lower(), "size": size}
+        commit = headers.get("x-repo-commit", "")
+        if re.fullmatch(r"[0-9a-fA-F]{40}", commit):
+            identity["resolved_revision"] = commit
+        return identity
+    return None
 
 
 def _download_with_requests(url: str, dest: Path, db_id: str) -> dict:
@@ -308,7 +384,8 @@ def _download_with_requests(url: str, dest: Path, db_id: str) -> dict:
     try:
         with requests.get(url, stream=True, timeout=30) as resp:
             resp.raise_for_status()
-            got = _identity_from_headers(resp.headers)
+            linked = _hf_response_identity(resp)
+            got = linked or _identity_from_headers(resp.headers)
             total = int(resp.headers.get("content-length", 0))
             try:
                 from tqdm import tqdm  # noqa: F401
@@ -317,6 +394,8 @@ def _download_with_requests(url: str, dest: Path, db_id: str) -> dict:
                 received = _download_with_print(resp, tmp, total, db_id)
         if total and received != total:
             raise IOError(f"incomplete download: {received} of {total} bytes")
+        if linked:
+            _verify_hf_file(tmp, linked)
         _install(tmp, dest)
         got["size"] = received
         return got

@@ -27,12 +27,20 @@ An optional Hugging Face download backend is available:
 uv pip install "datapond[download]"
 ```
 
-In version 0.1.5, this optional backend follows the Hugging Face repository's default branch even when the registry URL names an immutable revision. For a reproducible local copy, use the immutable URL and SHA-256 on the dataset page. Installing the extra is not required for remote queries.
+In version 0.1.5, this optional backend follows the Hugging Face repository's default branch even when the registry URL names an immutable revision. It can also label cached bytes with metadata from a different revision. For a reproducible local copy, use the immutable URL and SHA-256 on the dataset page. Installing the extra is not required for remote queries.
 
 The unreleased development code preserves the revision and nested filename from
 the registry's download URL (or attach URL when no download URL is provided).
-Explicit URLs for another host or repository use the HTTP fallback unchanged.
-This correction is not yet included in the PyPI 0.1.5 release.
+For Hugging Face downloads, it resolves the requested revision to an immutable
+commit and verifies the returned file's content hash and size before replacing
+the destination. Cached and newly fetched files receive the same checks. Missing
+or unsupported Hub metadata uses the HTTP fallback. Explicit URLs for another
+host or repository also use that fallback unchanged. HTTP sidecars record only
+validators supplied by the GET response; an unrelated HEAD response is not used
+to label the download. For HF redirects, both update checks and downloads use
+the resolve response's file hash instead of the CDN's transport ETag; HTTP
+downloads verify that hash before replacement. These corrections are not yet
+included in PyPI 0.1.5.
 
 ## Quick start
 
