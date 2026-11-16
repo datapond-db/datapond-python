@@ -134,10 +134,10 @@ def test_local_connection_quotes_paths_and_supports_replacement_scans(tmp_path):
     with patch.object(connection, "_local_path", return_value=str(dest)):
         con = connection.attach([("fixture", {})], local=True, quiet=True, single=True)
     assert isinstance(con, duckdb.DuckDBPyConnection)
-    assert con.sql("SELECT n FROM t").fetchone()[0] == 7
+    assert con.sql("SELECT n FROM t").fetchall()[0][0] == 7
     pd = pytest.importorskip("pandas")
     frame = pd.DataFrame({"x": [1, 2]})  # noqa: F841 - referenced by name in SQL
-    assert con.sql("SELECT SUM(x) FROM frame").fetchone()[0] == 3
+    assert con.sql("SELECT SUM(x) FROM frame").fetchall()[0][0] == 3
     con.close()
 
 
