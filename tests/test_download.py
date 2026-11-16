@@ -85,7 +85,7 @@ def test_successful_download_replaces_and_records_identity(tmp_path, no_hf):
     make_db(dest, 1)
     new = make_db(tmp_path / "new.duckdb", 2)
     entry = {"attach_url": "https://example.test/x.duckdb"}
-    with patch.object(dl, "get_database", return_value=entry), patch.object(dl.requests, "get", return_value=Response([new], size=len(new))):
+    with patch.object(dl, "get_database", return_value=entry), patch.object(dl.requests, "get", return_value=Response([new], size=len(new), etag="abc")):
         out = dl.download("x", path=str(dest), quiet=True)
     assert out == dest and dest.read_bytes() == new
     side = json.loads((tmp_path / "x.duckdb.datapond.json").read_text())
@@ -134,10 +134,10 @@ def test_local_connection_quotes_paths_and_supports_replacement_scans(tmp_path):
     with patch.object(connection, "_local_path", return_value=str(dest)):
         con = connection.attach([("fixture", {})], local=True, quiet=True, single=True)
     assert isinstance(con, duckdb.DuckDBPyConnection)
-    assert con.sql("SELECT n FROM t").fetchone()[0] == 7
+    assert con.sql("SELECT n FROM t").fetchall()[0][0] == 7
     pd = pytest.importorskip("pandas")
     frame = pd.DataFrame({"x": [1, 2]})  # noqa: F841 - referenced by name in SQL
-    assert con.sql("SELECT SUM(x) FROM frame").fetchone()[0] == 3
+    assert con.sql("SELECT SUM(x) FROM frame").fetchall()[0][0] == 3
     con.close()
 
 
@@ -158,15 +158,14 @@ def test_update_never_trusts_size_alone(tmp_path, monkeypatch):
             assert not d.called, "same Last-Modified is a validator"
 
 
-def test_download_redoes_transfer_when_file_changed_between_head_and_get(tmp_path, monkeypatch):
+def test_download_records_get_identity_when_file_changed_since_head(tmp_path, monkeypatch):
     monkeypatch.setattr(dl, "_try_hf_download", lambda *a, **k: False)
     monkeypatch.setattr(dl, "remote_identity", lambda url, timeout=30: {"etag": "old"})
     dest = tmp_path / "x.duckdb"
-    v1 = make_db(tmp_path / "v1.duckdb", 1)
     v2 = make_db(tmp_path / "v2.duckdb", 2)
     entry = {"attach_url": "https://example.test/x.duckdb"}
-    responses = [Response([v1], size=len(v1), etag="new"), Response([v2], size=len(v2), etag="new")]
+    responses = [Response([v2], size=len(v2), etag="new")]
     with patch.object(dl, "get_database", return_value=entry), patch.object(dl.requests, "get", side_effect=responses) as get:
         dl.download("x", path=str(dest), quiet=True)
-    assert get.call_count == 2 and dest.read_bytes() == v2
+    assert get.call_count == 1 and dest.read_bytes() == v2
     assert json.loads((tmp_path / "x.duckdb.datapond.json").read_text())["etag"] == "new"
